@@ -211,32 +211,32 @@ void logDumpCh(int ch, int stamp, const uint16_t *store)
     printString(" ]\n");
 }
 
-void logDump(int stamp, const uint16_t *store, int len)
+void logDump(struct LogInfo *info, const uint16_t *store, int len)
 {
     logLen = len;
     
     valueCount = 0;
         
     for(int ch = 0; ch < lc_channels; ch++)
-        logDumpCh(ch, stamp, store);
+        logDumpCh(ch, info->stamp, store);
         
     printString("fdr_");
-    printNum(stamp, 0);
+    printNum(info->stamp, 0);
     printString("_matrix = [ ");
         
     logOutputInit();
     
     for(int ch = 0; ch < lc_channels; ch++)
-        logOutputVariableName(stamp, logChannels[ch].name);
+        logOutputVariableName(info->stamp, logChannels[ch].name);
         
     printString(" ]\n");
         
     printString("// FLIGHT DATA RECORD WITH INDEX\n");
         
     printString("fdr_");
-    printNum(stamp, 0);
+    printNum(info->stamp, 0);
     printString(" = { fdr_");
-    printNum(stamp, 0);
+    printNum(info->stamp, 0);
     printString("_matrix, ");
     
     logOutputInit();

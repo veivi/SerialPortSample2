@@ -10,7 +10,8 @@
 #define LogDump_h
 
 #include <stdint.h>
+#include "Log.h"
 
-void logDump(int stamp, const uint16_t *store, int len);
+void logDump(struct LogInfo *info, const uint16_t *store, int len);
 
 #endif /* LogDump_h */

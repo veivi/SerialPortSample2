@@ -64,7 +64,9 @@
 #include <IOKit/serial/ioss.h>
 #include <IOKit/IOBSD.h>
 
+#include "Log.h"
 #include "LogDump.h"
+#include "Datagram.h"
 
 // Find the first device that matches the callout device path MATCH_PATH.
 // If this is undefined, return the first device found.
@@ -416,14 +418,13 @@ void storeByte(const uint8_t c)
 }
 
 int datagrams, datagramsGood;
-uint32_t userDataBytes;
 
 int hearbeatCount = 0;
 
 #define MAX_LOG_SIZE (1<<24)
 uint16_t logStorage[MAX_LOG_SIZE];
 int logTotal;
-uint16_t logStamp;
+struct LogInfo logInfo;
 
 void logStore(const uint16_t *data, int count)
 {
@@ -442,7 +443,7 @@ void logDisplay()
 {
     printf("\n// LOG DUMP COMPLETED\n");
     
-    logDump(logStamp, logStorage, logTotal);
+    logDump(&logInfo, logStorage, logTotal);
     
     fflush(stdout);
     logTotal = 0;
@@ -451,19 +452,19 @@ void logDisplay()
 void datagramInterpret(uint8_t t, const uint8_t *data, int size)
 {
     switch(t) {
-        case 1:
+        case DG_HEARTBEAT:
             // Heartbeat
             
             hearbeatCount++;
             break;
             
-        case 2:
+        case DG_CONSOLE_OUT:
             // Console output
             
             write(1, data, size);
             break;
             
-        case 3:
+        case DG_LOGDATA:
             // Log data
             if(size > 0)
                 logStore((const uint16_t*) data, size/2);
@@ -471,9 +472,10 @@ void datagramInterpret(uint8_t t, const uint8_t *data, int size)
                 logDisplay();
             break;
             
-        case 4:
+        case DG_LOGINFO:
             // Log stamp
-            logStamp = *((uint16_t*) data);
+            memcpy(&logInfo, data, sizeof(logInfo));
+            printf("\n// LOG %d OF MODEL %s\n", logInfo.stamp, logInfo.name);
             break;
     }
 }
@@ -484,16 +486,14 @@ Boolean datagramEnd(void)
     
     if(datagramSize > 2) {
         datagrams++;
-        uint16_t crcReceived = (store[datagramSize-2]<<8) | store[datagramSize-1];
+        uint16_t crcReceived = *((uint16_t*) &store[datagramSize-2]);
         uint16_t crc = crc16(0xFFFF, store, datagramSize - 2);
         success = crc == crcReceived;
         
         if(success) {
             datagramsGood++;
-            userDataBytes += datagramSize-2;
+            datagramInterpret(store[0], &store[1], datagramSize-3);
         }
-        
-        datagramInterpret(store[0], &store[1], datagramSize-3);
     }
     
     datagramSize = 0;
@@ -538,8 +538,11 @@ static Boolean dumpLog(int fileDescriptor)
         
         numBytes = read(STDIN_FILENO, buffer, sizeof(buffer));
 
-        if(numBytes > 0)
-            write(fileDescriptor, buffer, numBytes);
+        for(int i = 0; i < numBytes; i++) {
+            write(fileDescriptor, &buffer[i], 1);
+            if((buffer[i] == '\r' || buffer[i] == '\n') && i < numBytes-1)
+                usleep(0.05*1E6);
+        }
 
         // Link input
         
