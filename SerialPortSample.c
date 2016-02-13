@@ -420,6 +420,7 @@ void storeByte(const uint8_t c)
 int datagrams, datagramsGood;
 
 int hearbeatCount = 0;
+bool receivingLog = false;
 
 #define MAX_LOG_SIZE (1<<24)
 uint16_t logStorage[MAX_LOG_SIZE];
@@ -441,26 +442,30 @@ void logStore(const uint16_t *data, int count)
 
 void logDisplay()
 {
-    printf("\n// LOG DUMP COMPLETED\n");
-    
-    logDump(&logInfo, logStorage, logTotal);
-    
-    fflush(stdout);
+    if(receivingLog) {
+        printf("\n// LOG DUMP COMPLETED\n");
+        fflush(stdout);
+        logDump(&logInfo, logStorage, logTotal);
+    }
+
+    receivingLog = false;
     logTotal = 0;
 }
+
+uint32_t heartbeatCount;
 
 void datagramInterpret(uint8_t t, const uint8_t *data, int size)
 {
     switch(t) {
         case DG_HEARTBEAT:
             // Heartbeat
-            
-            hearbeatCount++;
+            memcpy((void*) &heartbeatCount, data, sizeof(heartbeatCount));
+//            printf("beat %d\n", heartbeatCount);
+//            fflush(stdout);
             break;
             
         case DG_CONSOLE_OUT:
             // Console output
-            
             write(1, data, size);
             break;
             
@@ -475,7 +480,8 @@ void datagramInterpret(uint8_t t, const uint8_t *data, int size)
         case DG_LOGINFO:
             // Log stamp
             memcpy(&logInfo, data, sizeof(logInfo));
-            printf("\n// LOG %d OF MODEL %s\n", logInfo.stamp, logInfo.name);
+            printf("// LOG %d OF MODEL %s\n", logInfo.stamp, logInfo.name);
+            receivingLog = true;
             break;
     }
 }
@@ -527,19 +533,42 @@ Boolean binaryInputChar(const uint8_t c)
     return success;
 }
 
+bool dumpDone = false;
+int tickCount = 0;
+
+void tickProcess(int fileDescriptor)
+{
+    if(tickCount < 3)
+        heartbeatCount = 0;
+//    else if(heartbeatCount < 1)
+//        serialWrite(fileDescriptor, "\r");
+    
+    tickCount++;
+}
+
 static Boolean dumpLog(int fileDescriptor)
 {
     char		buffer[1024];	// Input buffer
     ssize_t		numBytes;		// Number of bytes read or written
     Boolean		result = false;
-    
+    time_t prev = 0;
     while (1) {
+        // Tick
+        
+        time_t current = time(NULL);
+        
+        if(current > prev) {
+            tickProcess(fileDescriptor);
+            prev = current;
+        }
+        
         // Local input
         
         numBytes = read(STDIN_FILENO, buffer, sizeof(buffer));
 
         for(int i = 0; i < numBytes; i++) {
-            write(fileDescriptor, &buffer[i], 1);
+            char str[] = { buffer[i], '\0' };
+            serialWrite(fileDescriptor, str);
             if((buffer[i] == '\r' || buffer[i] == '\n') && i < numBytes-1)
                 usleep(0.05*1E6);
         }
@@ -550,6 +579,12 @@ static Boolean dumpLog(int fileDescriptor)
 
         for(int i = 0; i < numBytes; i++)
             binaryInputChar(buffer[i]);
+        
+        if(!dumpDone && heartbeatCount == 1) {
+            // Auto dump
+            serialWrite(fileDescriptor, "dumpz\n");
+            dumpDone = true;
+        }
     }
     
     return result;

@@ -8,6 +8,7 @@
 
 #include <math.h>
 #include <string.h>
+#include <stdio.h>
 #include "LogDump.h"
 #include "Log.h"
 
@@ -15,6 +16,23 @@ uint32_t logLen;
 
 static int col = 0;
 static bool first = false, tick = false;
+
+FILE *logFile;
+
+void openLogFile(struct LogInfo *info)
+{
+    char fileName[1000];
+    sprintf(fileName, "/Users/veivi/Desktop/VeiviPilotLog/%s_%d.banal", info->name, info->stamp);
+    logFile = fopen(fileName, "w");
+}
+
+
+void closeLogFile()
+{
+    if(logFile)
+        fclose(logFile);
+    logFile = NULL;
+}
 
 static void logOutputInit(void)
 {
@@ -28,12 +46,12 @@ long valueCount;
 void printNum(float v, int p)
 {
     const char fmt[] = {'%', '.', '0'+p, 'f', '\0'};
-    printf(fmt, (double) v);
+    fprintf(logFile, fmt, (double) v);
 }
 
 void printString(const char *s)
 {
-    printf("%s", s);
+    fprintf(logFile, "%s", s);
 }
 
 static void logOutputValue(float v)
@@ -41,13 +59,13 @@ static void logOutputValue(float v)
     float av = fabs(v);
     
     if(!first) {
-        printf(",");
+        fprintf(logFile, ",");
         col++;
     }
     
     if(col > 72) {
         float progress = 100.0 * (float) valueCount / logLen / lc_channels;
-        printf(" // %d%%\n", (int) progress);
+        fprintf(logFile, " // %d%%\n", (int) progress);
         col = 0;
     }
     
@@ -213,6 +231,8 @@ void logDumpCh(int ch, int stamp, const uint16_t *store)
 
 void logDump(struct LogInfo *info, const uint16_t *store, int len)
 {
+    openLogFile(info);
+    
     logLen = len;
     
     valueCount = 0;
@@ -245,6 +265,6 @@ void logDump(struct LogInfo *info, const uint16_t *store, int len)
         logOutputString(logChannels[ch].name);
         
     printString(" }\n");
-        
-    return;
+    
+    closeLogFile();
 }
