@@ -9,30 +9,14 @@
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include "LogDump.h"
 #include "Log.h"
 
 uint32_t logLen;
-
+static FILE *outputFile;
 static int col = 0;
 static bool first = false, tick = false;
-
-FILE *logFile;
-
-void openLogFile(struct LogInfo *info)
-{
-    char fileName[1000];
-    sprintf(fileName, "/Users/veivi/Desktop/VeiviPilotLog/%s_%d.banal", info->name, info->stamp);
-    logFile = fopen(fileName, "w");
-}
-
-
-void closeLogFile()
-{
-    if(logFile)
-        fclose(logFile);
-    logFile = NULL;
-}
 
 static void logOutputInit(void)
 {
@@ -46,12 +30,15 @@ long valueCount;
 void printNum(float v, int p)
 {
     const char fmt[] = {'%', '.', '0'+p, 'f', '\0'};
-    fprintf(logFile, fmt, (double) v);
+    fprintf(outputFile, fmt, (double) v);
 }
 
-void printString(const char *s)
+void printString(const char *f, ...)
 {
-    fprintf(logFile, "%s", s);
+    va_list args;
+    va_start(args, f);
+    vfprintf(outputFile, f, args);
+    va_end(args);
 }
 
 static void logOutputValue(float v)
@@ -59,13 +46,13 @@ static void logOutputValue(float v)
     float av = fabs(v);
     
     if(!first) {
-        fprintf(logFile, ",");
+        printString(",");
         col++;
     }
     
-    if(col > 72) {
+    if(col > 60) {
         float progress = 100.0 * (float) valueCount / logLen / lc_channels;
-        fprintf(logFile, " // %d%%\n", (int) progress);
+        printString(" // %d%%\n", (int) progress);
         col = 0;
     }
     
@@ -88,7 +75,7 @@ static void logOutputValue(float v)
 static void logOutputString(const char *s)
 {
     if(!first) {
-        printString(",");
+        printString(", ");
         col++;
     }
     
@@ -97,9 +84,7 @@ static void logOutputString(const char *s)
         col = 0;
     }
     
-    printString("\"");
-    printString(s);
-    printString("\"");
+    printString("\"%s\"", s);
     
     col += strlen(s) + 2;
     
@@ -118,10 +103,7 @@ static void logOutputVariableName(int stamp, const char *name)
         col = 0;
     }
     
-    printString("fdr_");
-    printNum(stamp, 0);
-    printString("_");
-    printString(name);
+    printString("fdr_%d_%s", stamp, name);
     
     col += 4 + 3 + 1 + strlen(name);
     
@@ -136,17 +118,9 @@ static void logOutputValueInvalid(float small, float large)
 
 void logDumpCh(int ch, int stamp, const uint16_t *store)
 {
-    printString("// CHANNEL ");
-    printNum(ch, 0);
-    printString(" (");
-    printString(logChannels[ch].name);
-    printString(") DATA\n");
+    printString("// CHANNEL %d (%s) DATA\n", ch, logChannels[ch].name);
     
-    printString("fdr_");
-    printNum(stamp, 0);
-    printString("_");
-    printString(logChannels[ch].name);
-    printString(" = [ ");
+    printString("fdr_%d_%s = [ ", stamp, logChannels[ch].name);
     
     float small = logChannels[ch].small, large = logChannels[ch].large;
     int currentCh = -1, nextCh = -1;
@@ -188,7 +162,7 @@ void logDumpCh(int ch, int stamp, const uint16_t *store)
                     } else {
                         // Invalid token
                         
-                        printString(" // *** Invalid entry ");
+                        printString(" // *** Invalid entry 0x%X\n", token);
                         break;
                     }
             }
@@ -229,10 +203,9 @@ void logDumpCh(int ch, int stamp, const uint16_t *store)
     printString(" ]\n");
 }
 
-void logDump(struct LogInfo *info, const uint16_t *store, int len)
+void logDump(FILE *output, struct LogInfo *info, const uint16_t *store, int len)
 {
-    openLogFile(info);
-    
+    outputFile = output;
     logLen = len;
     
     valueCount = 0;
@@ -266,5 +239,5 @@ void logDump(struct LogInfo *info, const uint16_t *store, int len)
         
     printString(" }\n");
     
-    closeLogFile();
+    printString("fdr = fdr_%d\n", info->stamp);
 }

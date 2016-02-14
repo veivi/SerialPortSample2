@@ -45,6 +45,7 @@
  
  */
 
+#include <sys/stat.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -89,7 +90,7 @@ static kern_return_t findModems(io_iterator_t *matchingServices)
 {
     kern_return_t			kernResult;
     CFMutableDictionaryRef	classesToMatch;
-    
+
     // Serial devices are instances of class IOSerialBSDClient.
     // Create a matching dictionary to find those instances.
     classesToMatch = IOServiceMatching(kIOSerialBSDServiceValue);
@@ -162,11 +163,9 @@ static kern_return_t getModemPath(io_iterator_t serialPortIterator, char *bsdPat
                                         kCFStringEncodingUTF8);
             CFRelease(bsdPathAsCFString);
             
-#ifdef MATCH_PATH
             if (strncmp(bsdPath, MATCH_PATH, strlen(MATCH_PATH)) != 0) {
                 result = false;
             }
-#endif
             
             if (result) {
                 printf("// Modem found with BSD path: %s", bsdPath);
@@ -373,6 +372,80 @@ error:
     return -1;
 }
 
+int datagrams, datagramsGood;
+int hearbeatCount = 0;
+bool receivingLog = false;
+
+#define MAX_LOG_SIZE (1<<24)
+uint16_t logStorage[MAX_LOG_SIZE];
+int logTotal;
+struct LogInfo logInfo;
+char modelName[NAME_LEN+1];
+bool backupBusy = false;
+FILE *backupFile = NULL, *logFile = NULL;
+
+#define BUF_LEN 1000
+
+void backupOpen(const char *name)
+{
+    char fileName[BUF_LEN];
+    int count = 0;
+    
+    while(1) {
+        snprintf(fileName, BUF_LEN,
+                 "/Users/veivi/Desktop/VeiviPilotData/Params/%s_%d.txt", modelName, count);
+        
+        backupFile = fopen(fileName, "r");
+        
+        if(!backupFile) {
+            backupFile = fopen(fileName, "w");
+            
+            if(backupFile)
+                backupBusy = true;
+
+            return;
+        }
+
+        fclose(backupFile);
+        count++;
+    }
+}
+
+void backupClose()
+{
+    if(backupFile)
+        fclose(backupFile);
+    
+    backupBusy = false;
+    backupFile = NULL;
+}
+
+bool logOpen(struct LogInfo *info)
+{
+    char fileName[BUF_LEN];
+
+    snprintf(fileName, BUF_LEN, "/Users/veivi/Desktop/VeiviPilotData/Log/%s", info->name);
+    mkdir(fileName, 0777);
+    
+    snprintf(fileName, BUF_LEN, "/Users/veivi/Desktop/VeiviPilotData/Log/%s/%s_%d.banal",
+             info->name, info->name, info->stamp);
+    logFile = fopen(fileName, "w");
+    
+    if(logFile)
+        return true;
+    
+    return false;
+}
+
+void logClose()
+{
+    if(logFile)
+        fclose(logFile);
+    
+    receivingLog = false;
+    logFile = NULL;
+}
+
 void serialWrite(int fileDescriptor, const char *string)
 {
     ssize_t stringLen = strlen(string);
@@ -384,6 +457,29 @@ void serialWrite(int fileDescriptor, const char *string)
             string += numBytes;
             stringLen -= numBytes;
         }
+    }
+}
+
+void consolePrintf(const char *format, ...)
+{
+    va_list args;
+    
+    va_start(args, format);
+    vfprintf(stdout, format, args);
+    va_end(args);
+    
+    fflush(stdout);
+}
+
+void consoleWrite(const uint8_t *data, size_t size)
+{
+    if(receivingLog && logFile)
+        fwrite((void*) data, size, 1, logFile);
+    else if(backupBusy && backupFile)
+        fwrite((void*) data, size, 1, backupFile);
+    else {
+        fwrite((void*) data, size, 1, stdout);
+        fflush(stdout);
     }
 }
 
@@ -417,72 +513,92 @@ void storeByte(const uint8_t c)
         store[datagramSize++] = c;
 }
 
-int datagrams, datagramsGood;
-
-int hearbeatCount = 0;
-bool receivingLog = false;
-
-#define MAX_LOG_SIZE (1<<24)
-uint16_t logStorage[MAX_LOG_SIZE];
-int logTotal;
-struct LogInfo logInfo;
-
 void logStore(const uint16_t *data, int count)
 {
     if(logTotal + count < MAX_LOG_SIZE) {
         memcpy(&logStorage[logTotal], data, count*sizeof(uint16_t));
         logTotal += count;
-        printf("// RECEIVED %d ENTRIES\r", logTotal);
-        fflush(stdout);
+        consolePrintf("// RECEIVED %d ENTRIES\r", logTotal);
     } else {
-        printf("// LOG STORAGE OVERFLOW\n");
-        fflush(stdout);
+        consolePrintf("// LOG STORAGE OVERFLOW\n");
     }
 }
 
 void logDisplay()
 {
     if(receivingLog) {
-        printf("\n// LOG DUMP COMPLETED\n");
-        fflush(stdout);
-        logDump(&logInfo, logStorage, logTotal);
-    }
+        logDump(logFile, &logInfo, logStorage, logTotal);
+        logClose();
 
-    receivingLog = false;
+        if(logTotal > 0)
+            consolePrintf("\n");
+        
+        consolePrintf("// LOG DUMP COMPLETED\n");
+    }
+    
     logTotal = 0;
 }
 
 uint32_t heartbeatCount;
+bool dumpDone = false, heartbeatReset = false;
+int tickCount = 0;
+
+void tickProcess(int fileDescriptor)
+{
+    if(tickCount < 3) {
+        heartbeatCount = 0;
+        tickCount++;
+    } else
+        heartbeatReset = true;
+}
 
 void datagramInterpret(uint8_t t, const uint8_t *data, int size)
 {
     switch(t) {
         case DG_HEARTBEAT:
             // Heartbeat
-            memcpy((void*) &heartbeatCount, data, sizeof(heartbeatCount));
-//            printf("beat %d\n", heartbeatCount);
-//            fflush(stdout);
+            if(heartbeatReset)
+                memcpy((void*) &heartbeatCount, data, sizeof(heartbeatCount));
+            // consolePrintf("beat %d\n", heartbeatCount);
             break;
             
         case DG_CONSOLE_OUT:
             // Console output
-            write(1, data, size);
+            consoleWrite(data, size);
             break;
             
         case DG_LOGDATA:
             // Log data
             if(size > 0)
                 logStore((const uint16_t*) data, size/2);
-            else
+            else {
                 logDisplay();
+                logClose();
+            }
             break;
             
         case DG_LOGINFO:
             // Log stamp
             memcpy(&logInfo, data, sizeof(logInfo));
-            printf("// LOG %d OF MODEL %s\n", logInfo.stamp, logInfo.name);
-            receivingLog = true;
+            consolePrintf("// LOG %d OF MODEL %s\n", logInfo.stamp, logInfo.name);
+            receivingLog = logOpen(&logInfo);
             break;
+            
+        case DG_PARAMS:
+            // Param backup
+            if(size > 0) {
+                memset(modelName, '\0', NAME_LEN);
+                memcpy(modelName, (char*) data, size);
+                consolePrintf("// BACKUP %s START\n", modelName);
+                backupOpen(modelName);;
+            } else {
+                consolePrintf("// BACKUP END\n");
+                backupClose();
+            }
+            break;
+            
+        default:
+            consolePrintf("!! FUNNY DATAGRAM TYPE = %d SIZE = %d\n", t, size);
     }
 }
 
@@ -533,19 +649,6 @@ Boolean binaryInputChar(const uint8_t c)
     return success;
 }
 
-bool dumpDone = false;
-int tickCount = 0;
-
-void tickProcess(int fileDescriptor)
-{
-    if(tickCount < 3)
-        heartbeatCount = 0;
-//    else if(heartbeatCount < 1)
-//        serialWrite(fileDescriptor, "\r");
-    
-    tickCount++;
-}
-
 static Boolean dumpLog(int fileDescriptor)
 {
     char		buffer[1024];	// Input buffer
@@ -580,7 +683,7 @@ static Boolean dumpLog(int fileDescriptor)
         for(int i = 0; i < numBytes; i++)
             binaryInputChar(buffer[i]);
         
-        if(!dumpDone && heartbeatCount == 1) {
+        if(!dumpDone && heartbeatCount > 0) {
             // Auto dump
             serialWrite(fileDescriptor, "dumpz\n");
             dumpDone = true;
@@ -622,11 +725,13 @@ int main(int argc, const char * argv[])
     kernResult = findModems(&serialPortIterator);
     if (KERN_SUCCESS != kernResult) {
         printf("No modems were found.\n");
+        return -1;
     }
     
     kernResult = getModemPath(serialPortIterator, bsdPath, sizeof(bsdPath));
     if (KERN_SUCCESS != kernResult) {
         printf("Could not get path for modem.\n");
+        return -2;
     }
     
     IOObjectRelease(serialPortIterator);	// Release the iterator.
