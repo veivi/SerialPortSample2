@@ -82,7 +82,7 @@ static struct termios gOriginalTTYAttrs;
 static kern_return_t findModems(io_iterator_t *matchingServices);
 static kern_return_t getModemPath(io_iterator_t serialPortIterator, char *bsdPath, CFIndex maxPathSize);
 static int openSerialPort(const char *bsdPath);
-static void closeSerialPort(int fileDescriptor);
+static void closeSerialPort(int serialPort);
 
 // Returns an iterator across all known modems. Caller is responsible for
 // releasing the iterator when iteration is complete.
@@ -218,7 +218,7 @@ bool initConsoleInput()
 // Return the file descriptor associated with the device.
 static int openSerialPort(const char *bsdPath)
 {
-    int				fileDescriptor = -1;
+    int				serialPort = -1;
     int				handshake;
     struct termios	options;
     
@@ -226,8 +226,8 @@ static int openSerialPort(const char *bsdPath)
     // The O_NONBLOCK flag also causes subsequent I/O on the device to be non-blocking.
     // See open(2) <x-man-page://2/open> for details.
     
-    fileDescriptor = open(bsdPath, O_RDWR | O_NOCTTY | O_NONBLOCK);
-    if (fileDescriptor == -1) {
+    serialPort = open(bsdPath, O_RDWR | O_NOCTTY | O_NONBLOCK);
+    if (serialPort == -1) {
         printf("Error opening serial port %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
         goto error;
@@ -238,7 +238,7 @@ static int openSerialPort(const char *bsdPath)
     // processes.
     // See tty(4) <x-man-page//4/tty> and ioctl(2) <x-man-page//2/ioctl> for details.
     
-    if (ioctl(fileDescriptor, TIOCEXCL) == -1) {
+    if (ioctl(serialPort, TIOCEXCL) == -1) {
         printf("Error setting TIOCEXCL on %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
         goto error;
@@ -247,14 +247,14 @@ static int openSerialPort(const char *bsdPath)
     // Now that the device is open, clear the O_NONBLOCK flag so subsequent I/O will block.
     // See fcntl(2) <x-man-page//2/fcntl> for details.
     
-    if (fcntl(fileDescriptor, F_SETFL, 0) == -1) {
+    if (fcntl(serialPort, F_SETFL, 0) == -1) {
         printf("Error clearing O_NONBLOCK %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
         goto error;
     }
     
     // Get the current options and save them so we can restore the default settings later.
-    if (tcgetattr(fileDescriptor, &gOriginalTTYAttrs) == -1) {
+    if (tcgetattr(serialPort, &gOriginalTTYAttrs) == -1) {
         printf("Error getting tty attributes %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
         goto error;
@@ -292,7 +292,7 @@ static int openSerialPort(const char *bsdPath)
 	// and output speed.
 /*
 	speed_t speed = 115200; // Set 14400 baud
-    if (ioctl(fileDescriptor, IOSSIOSPEED, &speed) == -1) {
+    if (ioctl(serialPort, IOSSIOSPEED, &speed) == -1) {
         printf("Error calling ioctl(..., IOSSIOSPEED, ...) %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
     }
@@ -306,7 +306,7 @@ static int openSerialPort(const char *bsdPath)
     printf("// Output baud rate changed to %d\n", (int) cfgetospeed(&options));
     
     // Cause the new options to take effect immediately.
-    if (tcsetattr(fileDescriptor, TCSANOW, &options) == -1) {
+    if (tcsetattr(serialPort, TCSANOW, &options) == -1) {
         printf("Error setting tty attributes %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
         goto error;
@@ -316,20 +316,20 @@ static int openSerialPort(const char *bsdPath)
     // See tty(4) <x-man-page//4/tty> and ioctl(2) <x-man-page//2/ioctl> for details.
     
     // Assert Data Terminal Ready (DTR)
-    if (ioctl(fileDescriptor, TIOCSDTR) == -1) {
+    if (ioctl(serialPort, TIOCSDTR) == -1) {
         printf("Error asserting DTR %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
     }
     
     // Clear Data Terminal Ready (DTR)
-    if (ioctl(fileDescriptor, TIOCCDTR) == -1) {
+    if (ioctl(serialPort, TIOCCDTR) == -1) {
         printf("Error clearing DTR %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
     }
     
     // Set the modem lines depending on the bits set in handshake
     handshake = TIOCM_DTR | TIOCM_RTS | TIOCM_CTS | TIOCM_DSR;
-    if (ioctl(fileDescriptor, TIOCMSET, &handshake) == -1) {
+    if (ioctl(serialPort, TIOCMSET, &handshake) == -1) {
         printf("Error setting handshake lines %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
     }
@@ -338,7 +338,7 @@ static int openSerialPort(const char *bsdPath)
     // See tty(4) <x-man-page//4/tty> and ioctl(2) <x-man-page//2/ioctl> for details.
     
     // Store the state of the modem lines in handshake
-    if (ioctl(fileDescriptor, TIOCMGET, &handshake) == -1) {
+    if (ioctl(serialPort, TIOCMGET, &handshake) == -1) {
         printf("Error getting handshake lines %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
     }
@@ -353,7 +353,7 @@ static int openSerialPort(const char *bsdPath)
 	// received anyway. The most common applications which are sensitive to read latency are MIDI and IrDA
 	// applications.
 	
-	if (ioctl(fileDescriptor, IOSSDATALAT, &mics) == -1) {
+	if (ioctl(serialPort, IOSSDATALAT, &mics) == -1) {
 		// set latency to 1 microsecond
         printf("Error setting read latency %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
@@ -361,12 +361,12 @@ static int openSerialPort(const char *bsdPath)
 	}
     
     // Success
-    return fileDescriptor;
+    return serialPort;
     
     // Failure path
 error:
-    if (fileDescriptor != -1) {
-        close(fileDescriptor);
+    if (serialPort != -1) {
+        close(serialPort);
     }
     
     return -1;
@@ -383,6 +383,7 @@ struct LogInfo logInfo;
 char modelName[NAME_LEN+1];
 bool backupBusy = false;
 FILE *backupFile = NULL, *logFile = NULL;
+int serialPort = -1;
 
 #define BUF_LEN 1000
 
@@ -446,12 +447,12 @@ void logClose()
     logFile = NULL;
 }
 
-void serialWrite(int fileDescriptor, const char *string)
+void serialWrite(const char *string)
 {
     ssize_t stringLen = strlen(string);
     
     while(stringLen > 0) {
-        ssize_t numBytes = write(fileDescriptor, string, stringLen);
+        ssize_t numBytes = write(serialPort, string, stringLen);
         
         if(numBytes > 0) {
             string += numBytes;
@@ -543,7 +544,7 @@ uint32_t heartbeatCount;
 bool dumpDone = false, heartbeatReset = false;
 int tickCount = 0;
 
-void tickProcess(int fileDescriptor)
+void tickProcess(void)
 {
     if(tickCount < 3) {
         heartbeatCount = 0;
@@ -571,9 +572,11 @@ void datagramInterpret(uint8_t t, const uint8_t *data, int size)
             // Log data
             if(size > 0)
                 logStore((const uint16_t*) data, size/2);
-            else {
+            else if(receivingLog) {
                 logDisplay();
                 logClose();
+                // Auto clear
+                serialWrite("clear\n");
             }
             break;
             
@@ -649,7 +652,7 @@ Boolean binaryInputChar(const uint8_t c)
     return success;
 }
 
-static Boolean dumpLog(int fileDescriptor)
+static Boolean dumpLog(void)
 {
     char		buffer[1024];	// Input buffer
     ssize_t		numBytes;		// Number of bytes read or written
@@ -661,7 +664,7 @@ static Boolean dumpLog(int fileDescriptor)
         time_t current = time(NULL);
         
         if(current > prev) {
-            tickProcess(fileDescriptor);
+            tickProcess();
             prev = current;
         }
         
@@ -671,21 +674,21 @@ static Boolean dumpLog(int fileDescriptor)
 
         for(int i = 0; i < numBytes; i++) {
             char str[] = { buffer[i], '\0' };
-            serialWrite(fileDescriptor, str);
+            serialWrite(str);
             if((buffer[i] == '\r' || buffer[i] == '\n') && i < numBytes-1)
                 usleep(0.05*1E6);
         }
 
         // Link input
         
-        numBytes = read(fileDescriptor, buffer, sizeof(buffer));
+        numBytes = read(serialPort, buffer, sizeof(buffer));
 
         for(int i = 0; i < numBytes; i++)
             binaryInputChar(buffer[i]);
         
         if(!dumpDone && heartbeatCount > 0) {
             // Auto dump
-            serialWrite(fileDescriptor, "dumpz\n");
+            serialWrite("dumpz\n");
             dumpDone = true;
         }
     }
@@ -694,12 +697,12 @@ static Boolean dumpLog(int fileDescriptor)
 }
 
 // Given the file descriptor for a serial device, close that device.
-void closeSerialPort(int fileDescriptor)
+void closeSerialPort(int serialPort)
 {
     // Block until all written output has been sent from the device.
     // Note that this call is simply passed on to the serial device driver.
 	// See tcsendbreak(3) <x-man-page://3/tcsendbreak> for details.
-    if (tcdrain(fileDescriptor) == -1) {
+    if (tcdrain(serialPort) == -1) {
         printf("Error waiting for drain - %s(%d).\n",
                strerror(errno), errno);
     }
@@ -707,17 +710,16 @@ void closeSerialPort(int fileDescriptor)
     // Traditionally it is good practice to reset a serial port back to
     // the state in which you found it. This is why the original termios struct
     // was saved.
-    if (tcsetattr(fileDescriptor, TCSANOW, &gOriginalTTYAttrs) == -1) {
+    if (tcsetattr(serialPort, TCSANOW, &gOriginalTTYAttrs) == -1) {
         printf("Error resetting tty attributes - %s(%d).\n",
                strerror(errno), errno);
     }
     
-    close(fileDescriptor);
+    close(serialPort);
 }
 
 int main(int argc, const char * argv[])
 {
-    int             fileDescriptor;
     kern_return_t	kernResult;
     io_iterator_t	serialPortIterator;
     char            bsdPath[MAXPATHLEN];
@@ -745,19 +747,19 @@ int main(int argc, const char * argv[])
     if(!initConsoleInput())
         return 0;
     
-    fileDescriptor = openSerialPort(bsdPath);
-    if (-1 == fileDescriptor) {
+    serialPort = openSerialPort(bsdPath);
+    if (-1 == serialPort) {
         return EX_IOERR;
     }
     
-    if (dumpLog(fileDescriptor)) {
+    if (dumpLog()) {
 //        printf("Log dumped successfully, size = %dk+%d entries.\n", (int) logSize/(1<<10), logSize%(1<<10));
     }
     else {
         printf("Could not initialize modem.\n");
     }
     
-    closeSerialPort(fileDescriptor);
+    closeSerialPort(serialPort);
     printf("Modem port closed.\n");
     
     return EX_OK;
