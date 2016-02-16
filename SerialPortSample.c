@@ -201,7 +201,7 @@ bool initConsoleInput()
     
     attrs.c_lflag &= ~ICANON;
     attrs.c_cc[VMIN] = 0;
-    attrs.c_cc[VTIME] = 1;
+    attrs.c_cc[VTIME] = 0;
     attrs.c_lflag &= ~(ECHO);
     
     // Cause the new options to take effect immediately.
@@ -576,7 +576,7 @@ void datagramInterpret(uint8_t t, const uint8_t *data, int size)
                 logDisplay();
                 logClose();
                 // Auto clear
-                serialWrite("clear\n");
+                // serialWrite("clear\n");
             }
             break;
             

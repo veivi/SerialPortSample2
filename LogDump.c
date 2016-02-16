@@ -183,7 +183,7 @@ void logDumpCh(int ch, int stamp, const uint16_t *store)
                 if(ENTRY_IS_TOKEN(entry)) {
                     // Delta value
                     
-                    valueRaw = ENTRY_VALUE(valueRaw + ((ENTRY_VALUE(entry) - t_delta) << 1));
+                    valueRaw = ENTRY_VALUE(valueRaw + ((ENTRY_VALUE(entry) & DELTA_MASK)<<1));
                     
                 } else {
                     // Absolute value
