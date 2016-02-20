@@ -576,7 +576,7 @@ void datagramInterpret(uint8_t t, const uint8_t *data, int size)
                 logDisplay();
                 logClose();
                 // Auto clear
-                // serialWrite("clear\n");
+                serialWrite("clear\n");
             }
             break;
             
