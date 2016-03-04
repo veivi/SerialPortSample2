@@ -541,7 +541,7 @@ void logDisplay()
 }
 
 uint32_t heartbeatCount;
-bool dumpDone = false, heartbeatReset = false;
+bool dumpDone = false, heartbeatReset = false, configDone = false, initDone = false;
 int tickCount = 0;
 
 void tickProcess(void)
@@ -566,6 +566,12 @@ void datagramInterpret(uint8_t t, const uint8_t *data, int size)
         case DG_CONSOLE_OUT:
             // Console output
             consoleWrite(data, size);
+            break;
+            
+        case DG_READY:
+            // Initialization done
+            // consolePrintf("ready\n");
+            initDone = true;
             break;
             
         case DG_LOGDATA:
@@ -686,7 +692,12 @@ static Boolean dumpLog(void)
         for(int i = 0; i < numBytes; i++)
             binaryInputChar(buffer[i]);
         
-        if(!dumpDone && heartbeatCount > 0) {
+        if(heartbeatCount > 0 && !configDone) {
+            serialWrite("console\n");
+            configDone = true;
+        }
+        
+        if(initDone && !dumpDone) {
             // Auto dump
             serialWrite("dumpz\n");
             dumpDone = true;
