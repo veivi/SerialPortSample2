@@ -200,9 +200,9 @@ bool initConsoleInput()
     // See tcsetattr(4) <x-man-page://4/tcsetattr> and termios(4) <x-man-page://4/termios> for details.
     
     attrs.c_lflag &= ~ICANON;
+    attrs.c_lflag &= ~ECHO;
     attrs.c_cc[VMIN] = 0;
     attrs.c_cc[VTIME] = 0;
-    attrs.c_lflag &= ~(ECHO);
     
     // Cause the new options to take effect immediately.
     if (tcsetattr(STDIN_FILENO, TCSANOW, &attrs) == -1) {
@@ -447,24 +447,43 @@ void logClose()
     logFile = NULL;
 }
 
-void serialWrite(const char *string)
+void serialWrite(const char *string, ssize_t len)
 {
-    ssize_t stringLen = strlen(string);
-    
-    while(stringLen > 0) {
-        ssize_t numBytes = write(serialPort, string, stringLen);
+    while(len > 0) {
+        ssize_t numBytes = write(serialPort, string, len);
         
         if(numBytes > 0) {
             string += numBytes;
-            stringLen -= numBytes;
+            len -= numBytes;
         }
     }
+}
+
+#define MAX_DG_SIZE  (1<<16)
+
+int maxDatagramSize = MAX_DG_SIZE;
+uint8_t datagramRxStore[MAX_DG_SIZE];
+
+void datagramSerialOut(uint8_t c)
+{
+    serialWrite((const char*) &c, 1);
+}
+
+void sendCommand(const char *str, int len)
+{
+    datagramTxStart(DG_CONSOLE_IN);
+    datagramTxOut((const uint8_t*) str, len);
+    datagramTxEnd();
+}
+
+void sendCommandString(const char *str)
+{
+    sendCommand(str, (int) strlen(str));
 }
 
 void consolePrintf(const char *format, ...)
 {
     va_list args;
-    
     va_start(args, format);
     vfprintf(stdout, format, args);
     va_end(args);
@@ -482,36 +501,6 @@ void consoleWrite(const uint8_t *data, size_t size)
         fwrite((void*) data, size, 1, stdout);
         fflush(stdout);
     }
-}
-
-static uint16_t crc16_update(uint16_t crc, uint8_t a)
-{
-    crc ^= a;
-    
-    for (int i = 0; i < 8; ++i)
-        crc = (crc >> 1) ^ ((crc & 1) * 0xA001U);
-    
-    return crc;
-}
-
-static uint16_t crc16(uint16_t initial, const uint8_t *data, int len)
-{
-    uint16_t crc = initial;
-    
-    for(int i = 0; i < len; i++)
-        crc = crc16_update(crc, data[i]);
-    
-    return crc;
-}
-
-int datagramSize = 0;
-const int maxSize = 1<<16;
-uint8_t store[maxSize];
-
-void storeByte(const uint8_t c)
-{
-    if(datagramSize < maxSize)
-        store[datagramSize++] = c;
 }
 
 void logStore(const uint16_t *data, int count)
@@ -553,7 +542,7 @@ void tickProcess(void)
         heartbeatReset = true;
 }
 
-void datagramInterpret(uint8_t t, const uint8_t *data, int size)
+void datagramInterpreter(uint8_t t, const uint8_t *data, int size)
 {
     switch(t) {
         case DG_HEARTBEAT:
@@ -582,7 +571,7 @@ void datagramInterpret(uint8_t t, const uint8_t *data, int size)
                 logDisplay();
                 logClose();
                 // Auto clear
-                serialWrite("clear\n");
+                sendCommandString("clear");
             }
             break;
             
@@ -611,59 +600,47 @@ void datagramInterpret(uint8_t t, const uint8_t *data, int size)
     }
 }
 
-Boolean datagramEnd(void)
-{
-    Boolean success = false;
-    
-    if(datagramSize > 2) {
-        datagrams++;
-        uint16_t crcReceived = *((uint16_t*) &store[datagramSize-2]);
-        uint16_t crc = crc16(0xFFFF, store, datagramSize - 2);
-        success = crc == crcReceived;
-        
-        if(success) {
-            datagramsGood++;
-            datagramInterpret(store[0], &store[1], datagramSize-3);
-        }
-    }
-    
-    datagramSize = 0;
-    return success;
-}
+const int buflen = 1<<10;
+char cmdBuffer[buflen];
+int cmdLen;
 
-Boolean binaryInputChar(const uint8_t c)
+void handleKey(char k)
 {
-    static uint8_t prev;
-    static Boolean busy = false;
-    Boolean success = false;
-
-    if(prev == 0x00 && c == 0x00) {
-        if(busy)
-            success = datagramEnd();
-        
-        busy = false;
-    } else if(busy) {
-        if(prev == 0x00)
-            storeByte(0x00);
-        else if(c != 0x00)
-            storeByte(c);
-    } else if(c != 0x00) {
-        busy = true;
-        datagramSize = 0;
-        storeByte(c);
+    switch(k) {
+        case '\b':
+        case 127:
+            if(cmdLen > 0) {
+                consolePrintf("\b \b");
+                cmdLen--;
+            }
+            break;
+            
+        case '\r':
+        case '\n':
+            consolePrintf("\n");
+            if(cmdLen > 0)
+                sendCommand(cmdBuffer, cmdLen);
+            cmdLen = 0;
+            usleep(1E6/20);
+            break;
+            
+        default:
+            if(cmdLen < buflen) {
+                cmdBuffer[cmdLen++] = k;
+                consolePrintf("%c", k);
+            }
+            break;
     }
-    
-    prev = c;
-    
-    return success;
 }
 
 static Boolean dumpLog(void)
 {
-    char		buffer[1024];	// Input buffer
+    char		buffer[1024], cmdBuffer[sizeof(buffer)];	// Input buffer
     ssize_t		numBytes;		// Number of bytes read or written
     Boolean		result = false;
     time_t prev = 0;
+    int cmdLen = 0;
+    
     while (1) {
         // Tick
         
@@ -678,30 +655,30 @@ static Boolean dumpLog(void)
         
         numBytes = read(STDIN_FILENO, buffer, sizeof(buffer));
 
-        for(int i = 0; i < numBytes; i++) {
-            char str[] = { buffer[i], '\0' };
-            serialWrite(str);
-            if((buffer[i] == '\r' || buffer[i] == '\n') && i < numBytes-1)
-                usleep(0.05*1E6);
-        }
+        for(int i = 0; i < numBytes; i++)
+            handleKey(buffer[i]);
 
         // Link input
         
         numBytes = read(serialPort, buffer, sizeof(buffer));
 
         for(int i = 0; i < numBytes; i++)
-            binaryInputChar(buffer[i]);
+            datagramRxInputChar(buffer[i]);
         
         if(heartbeatCount > 0 && !configDone) {
-            serialWrite("console\n");
+            sendCommandString("console");
             configDone = true;
         }
         
         if(initDone && !dumpDone) {
             // Auto dump
-            serialWrite("dumpz\n");
+            sendCommandString("dumpz");
             dumpDone = true;
         }
+        
+        // FlightGear UDP input
+        
+//        udpServerInput();
     }
     
     return result;
@@ -734,6 +711,10 @@ int main(int argc, const char * argv[])
     kern_return_t	kernResult;
     io_iterator_t	serialPortIterator;
     char            bsdPath[MAXPATHLEN];
+    
+    printf("Plop.\n");
+    
+    udpServerInit();
     
     kernResult = findModems(&serialPortIterator);
     if (KERN_SUCCESS != kernResult) {
