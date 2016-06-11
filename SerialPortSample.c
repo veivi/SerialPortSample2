@@ -279,7 +279,7 @@ static int openSerialPort(const char *bsdPath)
     
     cfmakeraw(&options);
     options.c_cc[VMIN] = 0;
-    options.c_cc[VTIME] = 1;
+    options.c_cc[VTIME] = 0;
     
     // The baud rate, word length, and handshake options can be set as follows:
     
@@ -345,7 +345,7 @@ static int openSerialPort(const char *bsdPath)
     
     printf("// Handshake lines currently set to %d\n", handshake);
 	
-	unsigned long mics = 10000UL;
+	unsigned long mics = 1000UL;
     
 	// Set the receive latency in microseconds. Serial drivers use this value to determine how often to
 	// dequeue characters received by the hardware. Most applications don't need to set this value: if an
@@ -447,18 +447,6 @@ void logClose()
     logFile = NULL;
 }
 
-void serialWrite(const char *string, ssize_t len)
-{
-    while(len > 0) {
-        ssize_t numBytes = write(serialPort, string, len);
-        
-        if(numBytes > 0) {
-            string += numBytes;
-            len -= numBytes;
-        }
-    }
-}
-
 #define MAX_DG_SIZE  (1<<16)
 
 int maxDatagramSize = MAX_DG_SIZE;
@@ -466,7 +454,7 @@ uint8_t datagramRxStore[MAX_DG_SIZE];
 
 void datagramSerialOut(uint8_t c)
 {
-    serialWrite((const char*) &c, 1);
+    write(serialPort, (const char*) &c, 1);
 }
 
 void sendCommand(const char *str, int len)
@@ -595,6 +583,11 @@ void datagramInterpreter(uint8_t t, const uint8_t *data, int size)
             }
             break;
             
+        case DG_CONTROL:
+            // Simulator link control record
+            udpClient(data, size);
+            break;
+
         default:
             consolePrintf("!! FUNNY DATAGRAM TYPE = %d SIZE = %d\n", t, size);
     }
@@ -635,13 +628,14 @@ void handleKey(char k)
 
 static Boolean dumpLog(void)
 {
-    char		buffer[1024], cmdBuffer[sizeof(buffer)];	// Input buffer
+    char		buffer[1024];	// Input buffer
     ssize_t		numBytes;		// Number of bytes read or written
     Boolean		result = false;
     time_t prev = 0;
-    int cmdLen = 0;
     
     while (1) {
+        bool idle = true;
+        
         // Tick
         
         time_t current = time(NULL);
@@ -653,17 +647,26 @@ static Boolean dumpLog(void)
         
         // Local input
         
-        numBytes = read(STDIN_FILENO, buffer, sizeof(buffer));
-
-        for(int i = 0; i < numBytes; i++)
-            handleKey(buffer[i]);
-
+        if((numBytes = read(STDIN_FILENO, buffer, sizeof(buffer))) > 0) {
+            idle = false;
+        
+            for(int i = 0; i < numBytes; i++)
+                handleKey(buffer[i]);
+        }
+        
         // Link input
         
-        numBytes = read(serialPort, buffer, sizeof(buffer));
-
-        for(int i = 0; i < numBytes; i++)
-            datagramRxInputChar(buffer[i]);
+        if((numBytes = read(serialPort, buffer, sizeof(buffer))) > 0) {
+            idle = false;
+            
+            for(int i = 0; i < numBytes; i++)
+                datagramRxInputChar(buffer[i]);
+        }
+        
+        // Simulator sensor input
+        
+        if(udpServerInput(initDone))
+            idle = false;
         
         if(heartbeatCount > 0 && !configDone) {
             sendCommandString("console");
@@ -676,9 +679,8 @@ static Boolean dumpLog(void)
             dumpDone = true;
         }
         
-        // FlightGear UDP input
-        
-//        udpServerInput();
+        if(idle)
+            usleep(1E6/200);
     }
     
     return result;
