@@ -447,6 +447,18 @@ void logClose()
     logFile = NULL;
 }
 
+void serialWrite(const char *string, ssize_t len)
+{
+    while(len > 0) {
+        ssize_t numBytes = write(serialPort, string, len);
+        
+        if(numBytes > 0) {
+            string += numBytes;
+            len -= numBytes;
+        }
+    }
+}
+
 #define MAX_DG_SIZE  (1<<16)
 
 int maxDatagramSize = MAX_DG_SIZE;
@@ -454,7 +466,7 @@ uint8_t datagramRxStore[MAX_DG_SIZE];
 
 void datagramSerialOut(uint8_t c)
 {
-    write(serialPort, (const char*) &c, 1);
+    serialWrite((const char*) &c, 1);
 }
 
 void sendCommand(const char *str, int len)
@@ -610,9 +622,8 @@ void handleKey(char k)
             
         case '\r':
         case '\n':
-            consolePrintf("\n");
-            if(cmdLen > 0)
-                sendCommand(cmdBuffer, cmdLen);
+            consolePrintf("\r");
+            sendCommand(cmdBuffer, cmdLen);
             cmdLen = 0;
             usleep(1E6/20);
             break;
