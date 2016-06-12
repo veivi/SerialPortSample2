@@ -15,39 +15,65 @@
 #include <unistd.h>
 #include <string.h>
 #include <fcntl.h>
+#include <errno.h>
 #include "Datagram.h"
+#include <netdb.h>
 
 #define BUFLEN 512
 #define NPACK 10
-#define PORT_IN 40010
+#define PORT_IN 49000
 #define PORT_OUT 40011
 
 int socketIn = -1, socketOut = -1;
 
+void debugnote(char *msg)
+{
+    printf("// DEBUG : %s\n", msg);
+    fflush(stdout);
+}
+
 int udpServerInit(void)
 {
-    struct sockaddr_in si_me;
-    
     if ((socketIn = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP))==-1)
         return 1;
     
-    memset((char *) &si_me, 0, sizeof(si_me));
-    
-    si_me.sin_family = AF_INET;
-    si_me.sin_port = htons(PORT_IN);
-    si_me.sin_addr.s_addr = htonl(INADDR_ANY);
-    
-    if (bind(socketIn, (struct sockaddr*) &si_me, sizeof(si_me))==-1)
-        return 2;
+    const char* hostname=0; /* wildcard */
 
-    unsigned long flags;
-    fcntl(socketIn, F_GETFL, &flags);
-    flags |= O_NONBLOCK;
-    fcntl(socketIn, F_SETFL, flags);
+    struct addrinfo hints;
+    memset(&hints,0,sizeof(hints));
+    hints.ai_family=AF_UNSPEC;
+    hints.ai_socktype=SOCK_DGRAM;
+    hints.ai_protocol=0;
+    hints.ai_flags=AI_PASSIVE|AI_ADDRCONFIG;
+    struct addrinfo* res=0;
+    int err=getaddrinfo(hostname,"40010",&hints,&res);
+    if (err!=0) {
+        debugnote(strerror(errno));
+        return 10;
+    }
+    
+    debugnote("bind");
+
+    if (bind(socketIn, res->ai_addr, res->ai_addrlen)==-1) {
+        debugnote(strerror(errno));
+        return 2;
+    }
+    
+    debugnote("bind done");
+    
+    int flags = fcntl(socketIn, F_GETFL, 0);
+    
+    if(flags > -1)
+        fcntl(socketIn, F_SETFL, flags | O_NONBLOCK);
     
     if ((socketOut = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP))==-1)
         return 1;
     
+    flags = fcntl(socketOut, F_GETFL, 0);
+    
+    if(flags > -1)
+        fcntl(socketOut, F_SETFL, flags | O_NONBLOCK);
+
     return 0;
 }
 
@@ -76,24 +102,21 @@ void udpServerCleanup(void)
 
 int udpServerInput(bool ready)
 {
-    struct sockaddr_in si_other;
-    socklen_t sockLen = sizeof(si_other);
-    char buf[BUFLEN];
+    struct SensorData buf;
+    long packetSize = 0;
     
-    ssize_t packetSize = 0;
+    packetSize = read(socketIn, &buf, sizeof(buf));
+
+//    printf("Received packet size %ld\n", packetSize);
     
-    if ((packetSize = recvfrom(socketIn, buf, BUFLEN, 0, (struct sockaddr*) &si_other, &sockLen)) != sizeof(struct SensorData))
+    if(packetSize < 1)
         return 0;
     
-    if(ready) {
+    if(ready && packetSize == sizeof(buf)) {
         datagramTxStart(DG_SENSOR);
-        datagramTxOut((const uint8_t*) buf, (int) packetSize);
+        datagramTxOut((const uint8_t*) &buf, (int) sizeof(buf));
         datagramTxEnd();
     }
-    
-//     static int count;
-    
-//     printf("Received packet num %d size %d\n", count++, packetSize);
 
     return 1;
 }

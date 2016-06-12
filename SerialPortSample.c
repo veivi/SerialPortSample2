@@ -469,16 +469,11 @@ void datagramSerialOut(uint8_t c)
     serialWrite((const char*) &c, 1);
 }
 
-void sendCommand(const char *str, int len)
+void sendCommand(const char *str)
 {
     datagramTxStart(DG_CONSOLE_IN);
-    datagramTxOut((const uint8_t*) str, len);
+    datagramTxOut((const uint8_t*) str, (int) strlen(str)+1);
     datagramTxEnd();
-}
-
-void sendCommandString(const char *str)
-{
-    sendCommand(str, (int) strlen(str));
 }
 
 void consolePrintf(const char *format, ...)
@@ -542,6 +537,8 @@ void tickProcess(void)
         heartbeatReset = true;
 }
 
+bool autoClearDone = false;
+
 void datagramInterpreter(uint8_t t, const uint8_t *data, int size)
 {
     switch(t) {
@@ -571,7 +568,9 @@ void datagramInterpreter(uint8_t t, const uint8_t *data, int size)
                 logDisplay();
                 logClose();
                 // Auto clear
-                sendCommandString("clear");
+                if(!autoClearDone)
+                    sendCommand("clear");
+                autoClearDone = true;
             }
             break;
             
@@ -623,7 +622,8 @@ void handleKey(char k)
         case '\r':
         case '\n':
             consolePrintf("\r");
-            sendCommand(cmdBuffer, cmdLen);
+            cmdBuffer[cmdLen++] = '\0';
+            sendCommand(cmdBuffer);
             cmdLen = 0;
             usleep(1E6/20);
             break;
@@ -680,13 +680,13 @@ static Boolean dumpLog(void)
             idle = false;
         
         if(heartbeatCount > 0 && !configDone) {
-            sendCommandString("console");
+            sendCommand("console");
             configDone = true;
         }
         
         if(initDone && !dumpDone) {
             // Auto dump
-            sendCommandString("dumpz");
+            sendCommand("dumpz");
             dumpDone = true;
         }
         
