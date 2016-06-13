@@ -107,18 +107,15 @@ int udpServerInput(bool ready)
     
     packetSize = read(socketIn, &buf, sizeof(buf));
 
-//    printf("Received packet size %ld\n", packetSize);
-    
-    if(packetSize < 1)
-        return 0;
-    
     if(ready && packetSize == sizeof(buf)) {
         datagramTxStart(DG_SENSOR);
         datagramTxOut((const uint8_t*) &buf, (int) sizeof(buf));
         datagramTxEnd();
+        
+        return 1;
     }
-
-    return 1;
+    
+    return 0;
 }
 
 
