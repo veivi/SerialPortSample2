@@ -644,8 +644,10 @@ static Boolean dumpLog(void)
     Boolean		result = false;
     time_t prev = 0;
     
+    bool idle = true;
+    
     while (1) {
-        bool idle = true;
+        idle = true;
         
         // Tick
         
@@ -691,7 +693,7 @@ static Boolean dumpLog(void)
         }
         
         if(idle)
-            usleep(1E6/200);
+            usleep(1E6/100);
     }
     
     return result;
