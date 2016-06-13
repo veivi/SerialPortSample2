@@ -37,6 +37,11 @@ int udpServerInit(void)
     if ((socketIn = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP))==-1)
         return 1;
     
+    int flags = fcntl(socketIn, F_GETFL, 0);
+    
+    if(flags > -1)
+        fcntl(socketIn, F_SETFL, flags | O_NONBLOCK);
+    
     const char* hostname=0; /* wildcard */
 
     struct addrinfo hints;
@@ -60,11 +65,6 @@ int udpServerInit(void)
     }
     
     debugnote("bind done");
-    
-    int flags = fcntl(socketIn, F_GETFL, 0);
-    
-    if(flags > -1)
-        fcntl(socketIn, F_SETFL, flags | O_NONBLOCK);
     
     if ((socketOut = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP))==-1)
         return 1;

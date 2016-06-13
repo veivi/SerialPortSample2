@@ -725,9 +725,10 @@ int main(int argc, const char * argv[])
     io_iterator_t	serialPortIterator;
     char            bsdPath[MAXPATHLEN];
     
-    printf("Plop.\n");
-    
-    udpServerInit();
+    if(udpServerInit()) {
+        printf("Simulator link input port open failed.\n");
+        return -1;
+    }
     
     kernResult = findModems(&serialPortIterator);
     if (KERN_SUCCESS != kernResult) {
