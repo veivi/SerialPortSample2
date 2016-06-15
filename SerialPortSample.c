@@ -525,7 +525,7 @@ void logDisplay()
 }
 
 uint32_t heartbeatCount;
-bool dumpDone = false, heartbeatReset = false, configDone = false, initDone = false;
+bool dumpDone = false, heartbeatReset = false, initDone = false;
 int tickCount = 0;
 
 void tickProcess(void)
@@ -535,6 +535,11 @@ void tickProcess(void)
         tickCount++;
     } else
         heartbeatReset = true;
+    
+    if(heartbeatCount > 0) {
+        datagramTxStart(DG_HEARTBEAT);
+        datagramTxEnd();
+    }
 }
 
 bool autoClearDone = false;
@@ -680,11 +685,6 @@ static Boolean dumpLog(void)
         
         if(udpServerInput(initDone))
             idle = false;
-        
-        if(heartbeatCount > 0 && !configDone) {
-            sendCommand("console");
-            configDone = true;
-        }
         
         if(initDone && !dumpDone) {
             // Auto dump
