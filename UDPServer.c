@@ -102,13 +102,13 @@ void udpServerCleanup(void)
 
 int udpServerInput(bool ready)
 {
-    struct SensorData buf;
+    struct SimLinkSensor buf;
     long packetSize = 0;
     
     packetSize = read(socketIn, &buf, sizeof(buf));
 
     if(ready && packetSize == sizeof(buf)) {
-        datagramTxStart(DG_SENSOR);
+        datagramTxStart(DG_SIMLINK);
         datagramTxOut((const uint8_t*) &buf, (int) sizeof(buf));
         datagramTxEnd();
         

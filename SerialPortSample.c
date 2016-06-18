@@ -471,7 +471,7 @@ void datagramSerialOut(uint8_t c)
 
 void sendCommand(const char *str)
 {
-    datagramTxStart(DG_CONSOLE_IN);
+    datagramTxStart(DG_CONSOLE);
     datagramTxOut((const uint8_t*) str, (int) strlen(str)+1);
     datagramTxEnd();
 }
@@ -536,7 +536,7 @@ void tickProcess(void)
     } else
         heartbeatReset = true;
     
-    if(heartbeatCount > 0) {
+    if(heartbeatReset) {
         datagramTxStart(DG_HEARTBEAT);
         datagramTxEnd();
     }
@@ -554,7 +554,7 @@ void datagramInterpreter(uint8_t t, const uint8_t *data, int size)
             // consolePrintf("beat %d\n", heartbeatCount);
             break;
             
-        case DG_CONSOLE_OUT:
+        case DG_CONSOLE:
             // Console output
             consoleWrite(data, size);
             break;
@@ -599,7 +599,7 @@ void datagramInterpreter(uint8_t t, const uint8_t *data, int size)
             }
             break;
             
-        case DG_CONTROL:
+        case DG_SIMLINK:
             // Simulator link control record
             udpClient(data, size);
             break;
