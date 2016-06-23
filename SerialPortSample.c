@@ -525,7 +525,7 @@ void logDisplay()
 }
 
 uint32_t heartbeatCount;
-bool dumpDone = false, heartbeatReset = false, initDone = false;
+bool dumpDone = false, heartbeatReset = false, initDone = false, logReady = false;
 int tickCount = 0;
 
 void tickProcess(void)
@@ -559,10 +559,14 @@ void datagramInterpreter(uint8_t t, const uint8_t *data, int size)
             consoleWrite(data, size);
             break;
             
+        case DG_INITIALIZED:
+            initDone = true;
+            break;
+            
         case DG_READY:
             // Initialization done
             // consolePrintf("ready\n");
-            initDone = true;
+            logReady = true;
             break;
             
         case DG_LOGDATA:
@@ -642,6 +646,8 @@ void handleKey(char k)
     }
 }
 
+bool simulatorConnected = false;
+
 static Boolean dumpLog(void)
 {
     char		buffer[1024];	// Input buffer
@@ -683,10 +689,12 @@ static Boolean dumpLog(void)
         
         // Simulator sensor input
         
-        if(udpServerInput(initDone))
+        if(udpServerInput(initDone)) {
+            simulatorConnected = true;
             idle = false;
+        }
         
-        if(initDone && !dumpDone) {
+        if(logReady && !dumpDone && !simulatorConnected) {
             // Auto dump
             sendCommand("dumpz");
             dumpDone = true;
