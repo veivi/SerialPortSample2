@@ -57,14 +57,10 @@ int udpServerInit(void)
         return 10;
     }
     
-    debugnote("bind");
-
     if (bind(socketIn, res->ai_addr, res->ai_addrlen)==-1) {
         debugnote(strerror(errno));
         return 2;
     }
-    
-    debugnote("bind done");
     
     if ((socketOut = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP))==-1)
         return 1;

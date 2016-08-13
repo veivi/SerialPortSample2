@@ -83,6 +83,8 @@ static kern_return_t findModems(io_iterator_t *matchingServices);
 static kern_return_t getModemPath(io_iterator_t serialPortIterator, char *bsdPath, CFIndex maxPathSize);
 static int openSerialPort(const char *bsdPath);
 static void closeSerialPort(int serialPort);
+void consolePrintf(const char *format, ...);
+void consoleNotef(const char *format, ...);
 
 // Returns an iterator across all known modems. Caller is responsible for
 // releasing the iterator when iteration is complete.
@@ -95,7 +97,7 @@ static kern_return_t findModems(io_iterator_t *matchingServices)
     // Create a matching dictionary to find those instances.
     classesToMatch = IOServiceMatching(kIOSerialBSDServiceValue);
     if (classesToMatch == NULL) {
-        printf("// IOServiceMatching returned a NULL dictionary.\n");
+        consoleNotef("IOServiceMatching returned a NULL dictionary.\n");
     }
     else {
         // Look for devices that claim to be modems.
@@ -117,7 +119,7 @@ static kern_return_t findModems(io_iterator_t *matchingServices)
     // Get an iterator across all matching devices.
     kernResult = IOServiceGetMatchingServices(kIOMasterPortDefault, classesToMatch, matchingServices);
     if (KERN_SUCCESS != kernResult) {
-        printf("// IOServiceGetMatchingServices returned %d\n", kernResult);
+        consoleNotef("IOServiceGetMatchingServices returned %d\n", kernResult);
 		goto exit;
     }
     
@@ -168,7 +170,7 @@ static kern_return_t getModemPath(io_iterator_t serialPortIterator, char *bsdPat
             }
             
             if (result) {
-                printf("// Modem found with BSD path: %s\n", bsdPath);
+                consoleNotef("Modem found with BSD path: %s\n", bsdPath);
                 modemFound = true;
                 kernResult = KERN_SUCCESS;
             }
@@ -188,7 +190,7 @@ int initConsoleInput()
 
     // Get the current options and save them so we can restore the default settings later.
     if (tcgetattr(STDIN_FILENO, &attrs) == -1) {
-        printf("Error getting tty attributes - %s(%d).\n",
+        consoleNotef("Error getting tty attributes - %s(%d).\n",
                strerror(errno), errno);
         return 1;
     }
@@ -204,7 +206,7 @@ int initConsoleInput()
     
     // Cause the new options to take effect immediately.
     if (tcsetattr(STDIN_FILENO, TCSANOW, &attrs) == -1) {
-        printf("Error setting tty attributes - %s(%d).\n",
+        consoleNotef("Error setting tty attributes - %s(%d).\n",
                strerror(errno), errno);
         return 2;
     }
@@ -227,7 +229,7 @@ static int openSerialPort(const char *bsdPath)
     
     serialPort = open(bsdPath, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (serialPort == -1) {
-        printf("Error opening serial port %s - %s(%d).\n",
+        consoleNotef("Error opening serial port %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
         goto error;
     }
@@ -238,7 +240,7 @@ static int openSerialPort(const char *bsdPath)
     // See tty(4) <x-man-page//4/tty> and ioctl(2) <x-man-page//2/ioctl> for details.
     
     if (ioctl(serialPort, TIOCEXCL) == -1) {
-        printf("Error setting TIOCEXCL on %s - %s(%d).\n",
+        consoleNotef("Error setting TIOCEXCL on %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
         goto error;
     }
@@ -247,14 +249,14 @@ static int openSerialPort(const char *bsdPath)
     // See fcntl(2) <x-man-page//2/fcntl> for details.
     
     if (fcntl(serialPort, F_SETFL, 0) == -1) {
-        printf("Error clearing O_NONBLOCK %s - %s(%d).\n",
+        consoleNotef("Error clearing O_NONBLOCK %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
         goto error;
     }
-    
+
     // Get the current options and save them so we can restore the default settings later.
     if (tcgetattr(serialPort, &gOriginalTTYAttrs) == -1) {
-        printf("Error getting tty attributes %s - %s(%d).\n",
+        consoleNotef("Error getting tty attributes %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
         goto error;
     }
@@ -269,8 +271,8 @@ static int openSerialPort(const char *bsdPath)
     // Print the current input and output baud rates.
     // See tcsetattr(4) <x-man-page://4/tcsetattr> for details.
     
-    printf("// Current input baud rate is %d\n", (int) cfgetispeed(&options));
-    printf("// Current output baud rate is %d\n", (int) cfgetospeed(&options));
+    consoleNotef("Current input baud rate is %d\n", (int) cfgetispeed(&options));
+    consoleNotef("Current output baud rate is %d\n", (int) cfgetospeed(&options));
     
     // Set raw input (non-canonical) mode, with reads blocking until either a single character
     // has been received or a one second timeout expires.
@@ -292,7 +294,7 @@ static int openSerialPort(const char *bsdPath)
 /*
 	speed_t speed = 115200; // Set 14400 baud
     if (ioctl(serialPort, IOSSIOSPEED, &speed) == -1) {
-        printf("Error calling ioctl(..., IOSSIOSPEED, ...) %s - %s(%d).\n",
+        consoleNotef("Error calling ioctl(..., IOSSIOSPEED, ...) %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
     }
 */
@@ -301,12 +303,12 @@ static int openSerialPort(const char *bsdPath)
 	// the current baud rate if the IOSSIOSPEED ioctl was used but will instead return the speed set by the last call
 	// to cfsetspeed.
     
-    printf("// Input baud rate changed to %d\n", (int) cfgetispeed(&options));
-    printf("// Output baud rate changed to %d\n", (int) cfgetospeed(&options));
+    consoleNotef("Input baud rate changed to %d\n", (int) cfgetispeed(&options));
+    consoleNotef("Output baud rate changed to %d\n", (int) cfgetospeed(&options));
     
     // Cause the new options to take effect immediately.
     if (tcsetattr(serialPort, TCSANOW, &options) == -1) {
-        printf("Error setting tty attributes %s - %s(%d).\n",
+        consoleNotef("Error setting tty attributes %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
         goto error;
     }
@@ -316,20 +318,20 @@ static int openSerialPort(const char *bsdPath)
     
     // Assert Data Terminal Ready (DTR)
     if (ioctl(serialPort, TIOCSDTR) == -1) {
-        printf("Error asserting DTR %s - %s(%d).\n",
+        consoleNotef("Error asserting DTR %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
     }
     
     // Clear Data Terminal Ready (DTR)
     if (ioctl(serialPort, TIOCCDTR) == -1) {
-        printf("Error clearing DTR %s - %s(%d).\n",
+        consoleNotef("Error clearing DTR %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
     }
     
     // Set the modem lines depending on the bits set in handshake
     handshake = TIOCM_DTR | TIOCM_RTS | TIOCM_CTS | TIOCM_DSR;
     if (ioctl(serialPort, TIOCMSET, &handshake) == -1) {
-        printf("Error setting handshake lines %s - %s(%d).\n",
+        consoleNotef("Error setting handshake lines %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
     }
     
@@ -338,11 +340,11 @@ static int openSerialPort(const char *bsdPath)
     
     // Store the state of the modem lines in handshake
     if (ioctl(serialPort, TIOCMGET, &handshake) == -1) {
-        printf("Error getting handshake lines %s - %s(%d).\n",
+        consoleNotef("Error getting handshake lines %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
     }
     
-    printf("// Handshake lines currently set to %d\n", handshake);
+    consoleNotef("Handshake lines currently set to %d\n", handshake);
 	
 	unsigned long mics = 1000UL;
     
@@ -354,7 +356,7 @@ static int openSerialPort(const char *bsdPath)
 	
 	if (ioctl(serialPort, IOSSDATALAT, &mics) == -1) {
 		// set latency to 1 microsecond
-        printf("Error setting read latency %s - %s(%d).\n",
+        consoleNotef("Error setting read latency %s - %s(%d).\n",
                bsdPath, strerror(errno), errno);
         goto error;
 	}
@@ -464,7 +466,7 @@ void serialWrite(const char *string, ssize_t len)
         
         if(numBytes < 0) {
             if(!linkDisconnected)
-                printf("Serial write failed, disconnecting.\n");
+                consoleNotef("Serial write failed, disconnecting.\n");
             linkDisconnected = true;
             return;
         } else if(numBytes > 0){
@@ -492,15 +494,30 @@ void sendCommand(const char *str)
     datagramTxEnd();
 }
 
+void consolevPrintf(const char *format, va_list args)
+{
+    vfprintf(stdout, format, args);
+    fflush(stdout);
+}
+
 void consolePrintf(const char *format, ...)
 {
     va_list args;
     va_start(args, format);
-    vfprintf(stdout, format, args);
+    consolevPrintf(format, args);
     va_end(args);
-    
-    fflush(stdout);
 }
+
+void consoleNotef(const char *format, ...)
+{
+    consolePrintf("-- ");
+    
+    va_list args;
+    va_start(args, format);
+    consolevPrintf(format, args);
+    va_end(args);
+}
+
 
 void consoleWrite(const uint8_t *data, size_t size)
 {
@@ -519,9 +536,9 @@ void logStore(const uint16_t *data, int count)
     if(logTotal + count < MAX_LOG_SIZE) {
         memcpy(&logStorage[logTotal], data, count*sizeof(uint16_t));
         logTotal += count;
-        consolePrintf("// RECEIVED %d ENTRIES\r", logTotal);
+        consoleNotef("RECEIVED %d ENTRIES\r", logTotal);
     } else {
-        consolePrintf("// LOG STORAGE OVERFLOW\n");
+        consoleNotef("LOG STORAGE OVERFLOW\n");
     }
 }
 
@@ -534,7 +551,7 @@ void logDisplay()
         if(logTotal > 0)
             consolePrintf("\n");
         
-        consolePrintf("// LOG DUMP COMPLETED\n");
+        consoleNotef("LOG DUMP COMPLETED\n");
     }
     
     logTotal = 0;
@@ -551,7 +568,7 @@ void tickProcess(void)
     
     if(tickCount > 20 && time(NULL) > heartbeatTime+2) {
         if(!linkDisconnected)
-            printf("Hearbeat lost, disconnecting.\n");
+            consoleNotef("Hearbeat lost, disconnecting.\n");
         linkDisconnected = true;
     }
     
@@ -583,7 +600,7 @@ void datagramInterpreter(uint8_t t, const uint8_t *data, int size)
             
         case DG_READY:
             // Initialization done
-            // consolePrintf("ready\n");
+            // consoleNotef("ready\n");
             logReady = true;
             break;
             
@@ -604,7 +621,7 @@ void datagramInterpreter(uint8_t t, const uint8_t *data, int size)
         case DG_LOGINFO:
             // Log stamp
             memcpy(&logInfo, data, sizeof(logInfo));
-            consolePrintf("// LOG %d OF MODEL %s\n", logInfo.stamp, logInfo.name);
+            consoleNotef("LOG %d OF MODEL %s\n", logInfo.stamp, logInfo.name);
             receivingLog = logOpen(&logInfo);
             break;
             
@@ -613,10 +630,10 @@ void datagramInterpreter(uint8_t t, const uint8_t *data, int size)
             if(size > 0) {
                 memset(modelName, '\0', NAME_LEN);
                 memcpy(modelName, (char*) data, size);
-                consolePrintf("// BACKUP %s START\n", modelName);
+                consoleNotef("BACKUP %s START\n", modelName);
                 backupOpen(modelName);;
             } else {
-                consolePrintf("// BACKUP END\n");
+                consoleNotef("BACKUP END\n");
                 backupClose();
             }
             break;
@@ -627,7 +644,7 @@ void datagramInterpreter(uint8_t t, const uint8_t *data, int size)
             break;
 
         default:
-            consolePrintf("!! FUNNY DATAGRAM TYPE = %d SIZE = %d\n", t, size);
+            consoleNotef("FUNNY DATAGRAM TYPE = %d SIZE = %d\n", t, size);
     }
 }
 
@@ -691,7 +708,7 @@ static Boolean serverLoop(void)
             for(int i = 0; i < numBytes; i++)
                 handleKey(buffer[i]);
             
-//            printf("%d bytes \n", numBytes);
+//            consoleNotef("%d bytes \n", numBytes);
         }
         
         // Link input
@@ -701,7 +718,7 @@ static Boolean serverLoop(void)
             
             for(int i = 0; i < numBytes; i++)
                 datagramRxInputChar(buffer[i]);
-//            printf("%d bytes ", numBytes);
+//            consoleNotef("%d bytes ", numBytes);
         }
         
         // Simulator sensor input
@@ -731,7 +748,7 @@ void closeSerialPort(int serialPort)
     // Note that this call is simply passed on to the serial device driver.
 	// See tcsendbreak(3) <x-man-page://3/tcsendbreak> for details.
     if (tcdrain(serialPort) == -1) {
-        printf("Error waiting for drain - %s(%d).\n",
+        consoleNotef("Error waiting for drain - %s(%d).\n",
                strerror(errno), errno);
     }
     
@@ -739,7 +756,7 @@ void closeSerialPort(int serialPort)
     // the state in which you found it. This is why the original termios struct
     // was saved.
     if (tcsetattr(serialPort, TCSANOW, &gOriginalTTYAttrs) == -1) {
-        printf("Error resetting tty attributes - %s(%d).\n",
+        consoleNotef("Error resetting tty attributes - %s(%d).\n",
                strerror(errno), errno);
     }
     
@@ -752,35 +769,41 @@ int main(int argc, const char * argv[])
     char            bsdPath[MAXPATHLEN];
     
     if(udpServerInit() != 0) {
-        printf("Simulator link input port open failed.\n");
+        consoleNotef("Simulator link input port open failed.\n");
         return -1;
     }
 
     if(initConsoleInput() != 0) {
-        printf("Console input initialization failed.\n");
+        consoleNotef("Console input initialization failed.\n");
         return -2;
     }
     
+    Boolean looking = false;
+
     while(1) {
+        if(!looking) {
+            consoleNotef("Looking for the serial port...\n");
+            looking = true;
+        }
+        
         if(findModems(&serialPortIterator) == KERN_SUCCESS) {
             if(getModemPath(serialPortIterator, bsdPath, sizeof(bsdPath)) == KERN_SUCCESS) {
                 if(openSerialPort(bsdPath) != -1) {
                     serverInit();
                     
-                    printf("Entering server loop...\n");
+                    consoleNotef("Entering server loop...\n");
                     serverLoop();
-                    printf("Server loop exited.\n");
+                    consoleNotef("Server loop exited.\n");
              
                     closeSerialPort(serialPort);
+                    looking = false;
                 } else
-                    printf("Serial port could not be opened.\n");
-            } else
-                printf("Could not get path for modem.\n");
-    
+                    consoleNotef("Serial port could not be opened.\n");
+            }
+            
             IOObjectRelease(serialPortIterator);
-        } else
-            printf("No modems were found.\n");
-        
+        }
+
         sleep(1);
     }
 
