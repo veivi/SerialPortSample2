@@ -101,7 +101,7 @@ static kern_return_t findModems(io_iterator_t *matchingServices)
         // Look for devices that claim to be modems.
         CFDictionarySetValue(classesToMatch,
                              CFSTR(kIOSerialBSDTypeKey),
-                             CFSTR(kIOSerialBSDAllTypes));
+                             CFSTR(kIOSerialBSDModemType));
         
 		// Each serial device object has a property with key
         // kIOSerialBSDTypeKey and a value that is one of kIOSerialBSDAllTypes,
@@ -168,11 +168,13 @@ static kern_return_t getModemPath(io_iterator_t serialPortIterator, char *bsdPat
             }
             
             if (result) {
-                printf("// Modem found with BSD path: %s\n", bsdPath);
+                printf("// Modem found with BSD path: %s", bsdPath);
                 modemFound = true;
                 kernResult = KERN_SUCCESS;
             }
         }
+        
+        printf("\n");
         
         // Release the io_service_t now that we are done with it.
         
@@ -182,7 +184,7 @@ static kern_return_t getModemPath(io_iterator_t serialPortIterator, char *bsdPat
     return kernResult;
 }
 
-int initConsoleInput()
+bool initConsoleInput()
 {
     struct termios attrs;
 
@@ -190,7 +192,7 @@ int initConsoleInput()
     if (tcgetattr(STDIN_FILENO, &attrs) == -1) {
         printf("Error getting tty attributes - %s(%d).\n",
                strerror(errno), errno);
-        return 1;
+        return false;
     }
     
     // Set raw input (non-canonical) mode, with reads blocking until either a single character
@@ -206,18 +208,17 @@ int initConsoleInput()
     if (tcsetattr(STDIN_FILENO, TCSANOW, &attrs) == -1) {
         printf("Error setting tty attributes - %s(%d).\n",
                strerror(errno), errno);
-        return 2;
+        return false;
     }
 
-    return 0;
+    return true;
 }
-
-int serialPort = -1;
 
 // Given the path to a serial device, open the device and configure it.
 // Return the file descriptor associated with the device.
 static int openSerialPort(const char *bsdPath)
 {
+    int				serialPort = -1;
     int				handshake;
     struct termios	options;
     
@@ -364,28 +365,16 @@ static int openSerialPort(const char *bsdPath)
     
     // Failure path
 error:
-    if (serialPort != -1)
+    if (serialPort != -1) {
         close(serialPort);
+    }
     
-    serialPort = -1;
-    return serialPort;
+    return -1;
 }
 
 int datagrams, datagramsGood;
 int hearbeatCount = 0;
 bool receivingLog = false;
-bool simulatorConnected = false;
-uint32_t heartbeatCount;
-bool dumpDone = false, heartbeatReset = false, initDone = false, logReady = false, linkDisconnected = false;
-int tickCount = 0;
-bool autoClearDone = false;
-time_t heartbeatTime;
-
-static void serverInit(void)
-{
-    dumpDone = heartbeatReset = initDone = logReady = simulatorConnected = receivingLog = autoClearDone = linkDisconnected = false;
-    hearbeatCount = datagrams = tickCount = 0;
-}
 
 #define MAX_LOG_SIZE (1<<24)
 uint16_t logStorage[MAX_LOG_SIZE];
@@ -394,6 +383,7 @@ struct LogInfo logInfo;
 char modelName[NAME_LEN+1];
 bool backupBusy = false;
 FILE *backupFile = NULL, *logFile = NULL;
+int serialPort = -1;
 
 #define BUF_LEN 1000
 
@@ -462,16 +452,10 @@ void serialWrite(const char *string, ssize_t len)
     while(len > 0) {
         ssize_t numBytes = write(serialPort, string, len);
         
-        if(numBytes < 0) {
-            if(!linkDisconnected)
-                printf("Serial write failed, disconnecting.\n");
-            linkDisconnected = true;
-            return;
-        } else if(numBytes > 0){
+        if(numBytes > 0) {
             string += numBytes;
             len -= numBytes;
-        } else
-            usleep(1e6/10);
+        }
     }
 }
 
@@ -540,20 +524,17 @@ void logDisplay()
     logTotal = 0;
 }
 
+uint32_t heartbeatCount;
+bool dumpDone = false, heartbeatReset = false, initDone = false, logReady = false;
+int tickCount = 0;
+
 void tickProcess(void)
 {
-    tickCount++;
-    
-    if(tickCount < 4)
+    if(tickCount < 3) {
         heartbeatCount = 0;
-    else
+        tickCount++;
+    } else
         heartbeatReset = true;
-    
-    if(tickCount > 20 && time(NULL) > heartbeatTime+2) {
-        if(!linkDisconnected)
-            printf("Hearbeat lost, disconnecting.\n");
-        linkDisconnected = true;
-    }
     
     if(heartbeatReset) {
         datagramTxStart(DG_HEARTBEAT);
@@ -561,15 +542,16 @@ void tickProcess(void)
     }
 }
 
+bool autoClearDone = false;
+
 void datagramInterpreter(uint8_t t, const uint8_t *data, int size)
 {
     switch(t) {
         case DG_HEARTBEAT:
             // Heartbeat
-            if(heartbeatReset) {
+            if(heartbeatReset)
                 memcpy((void*) &heartbeatCount, data, sizeof(heartbeatCount));
-                heartbeatTime = time(NULL);
-            }
+            // consolePrintf("beat %d\n", heartbeatCount);
             break;
             
         case DG_CONSOLE:
@@ -664,18 +646,22 @@ void handleKey(char k)
     }
 }
 
-static Boolean serverLoop(void)
+bool simulatorConnected = false;
+
+static Boolean dumpLog(void)
 {
     char		buffer[1024];	// Input buffer
     ssize_t		numBytes;		// Number of bytes read or written
+    Boolean		result = false;
     time_t prev = 0;
     
     bool idle = true;
     
-    while (!linkDisconnected) {
+    while (1) {
         idle = true;
         
         // Tick
+        
         time_t current = time(NULL);
         
         if(current > prev) {
@@ -690,8 +676,6 @@ static Boolean serverLoop(void)
         
             for(int i = 0; i < numBytes; i++)
                 handleKey(buffer[i]);
-            
-//            printf("%d bytes \n", numBytes);
         }
         
         // Link input
@@ -701,7 +685,6 @@ static Boolean serverLoop(void)
             
             for(int i = 0; i < numBytes; i++)
                 datagramRxInputChar(buffer[i]);
-//            printf("%d bytes ", numBytes);
         }
         
         // Simulator sensor input
@@ -721,7 +704,7 @@ static Boolean serverLoop(void)
             usleep(1E6/100);
     }
     
-    return true;
+    return result;
 }
 
 // Given the file descriptor for a serial device, close that device.
@@ -748,41 +731,52 @@ void closeSerialPort(int serialPort)
 
 int main(int argc, const char * argv[])
 {
+    kern_return_t	kernResult;
     io_iterator_t	serialPortIterator;
     char            bsdPath[MAXPATHLEN];
     
-    if(udpServerInit() != 0) {
+    if(udpServerInit()) {
         printf("Simulator link input port open failed.\n");
         return -1;
     }
-
-    if(initConsoleInput() != 0) {
-        printf("Console input initialization failed.\n");
+    
+    kernResult = findModems(&serialPortIterator);
+    if (KERN_SUCCESS != kernResult) {
+        printf("No modems were found.\n");
+        return -1;
+    }
+    
+    kernResult = getModemPath(serialPortIterator, bsdPath, sizeof(bsdPath));
+    if (KERN_SUCCESS != kernResult) {
+        printf("Could not get path for modem.\n");
         return -2;
     }
     
-    while(1) {
-        if(findModems(&serialPortIterator) == KERN_SUCCESS) {
-            if(getModemPath(serialPortIterator, bsdPath, sizeof(bsdPath)) == KERN_SUCCESS) {
-                if(openSerialPort(bsdPath) != -1) {
-                    serverInit();
-                    
-                    printf("Entering server loop...\n");
-                    serverLoop();
-                    printf("Server loop exited.\n");
-             
-                    closeSerialPort(serialPort);
-                } else
-                    printf("Serial port could not be opened.\n");
-            } else
-                printf("Could not get path for modem.\n");
+    IOObjectRelease(serialPortIterator);	// Release the iterator.
     
-            IOObjectRelease(serialPortIterator);
-        } else
-            printf("No modems were found.\n");
-        
-        sleep(1);
+    // Now open the modem port we found, initialize the modem, then close it
+    if (!bsdPath[0]) {
+        printf("No modem port found.\n");
+        return EX_UNAVAILABLE;
     }
-
+    
+    if(!initConsoleInput())
+        return 0;
+    
+    serialPort = openSerialPort(bsdPath);
+    if (-1 == serialPort) {
+        return EX_IOERR;
+    }
+    
+    if (dumpLog()) {
+//        printf("Log dumped successfully, size = %dk+%d entries.\n", (int) logSize/(1<<10), logSize%(1<<10));
+    }
+    else {
+        printf("Could not initialize modem.\n");
+    }
+    
+    closeSerialPort(serialPort);
+    printf("Modem port closed.\n");
+    
     return EX_OK;
 }
